@@ -1,0 +1,2 @@
+import { list } from '../../../db/leads';
+export async function GET(req:Request){try{const leads=await list(new URL(req.url));return Response.json({leads,summary:{total:leads.length,verified:leads.filter(x=>x.confidence==='High').length,withEmail:leads.filter(x=>x.emails.length).length,withWhatsapp:leads.filter(x=>x.whatsapps.length).length}})}catch(e){return Response.json({error:e instanceof Error?e.message:'Database error'},{status:500})}}
