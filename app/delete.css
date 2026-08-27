@@ -1,0 +1,5 @@
+.clear-button,.delete-button{border:1px solid #efcfd1;background:#fff7f7;color:#b43b43;border-radius:7px;font-size:9px;font-weight:700;cursor:pointer;transition:.15s ease}
+.clear-button{height:39px;padding:0 11px;white-space:nowrap}
+.delete-button{padding:6px 8px}
+.clear-button:hover,.delete-button:hover{background:#b43b43;color:#fff}
+.clear-button:disabled,.delete-button:disabled{opacity:.45;cursor:not-allowed}

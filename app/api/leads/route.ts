@@ -1,2 +1,3 @@
-import { list } from '../../../db/leads';
+import { list, removeLead } from '../../../db/leads';
 export async function GET(req:Request){try{const leads=await list(new URL(req.url));return Response.json({leads,summary:{total:leads.length,verified:leads.filter(x=>x.confidence==='High').length,withEmail:leads.filter(x=>x.emails.length).length,withWhatsapp:leads.filter(x=>x.whatsapps.length).length}})}catch(e){return Response.json({error:e instanceof Error?e.message:'Database error'},{status:500})}}
+export async function DELETE(req:Request){try{const p=new URL(req.url).searchParams,id=p.get('id'),all=p.get('all')==='true';if(!all&&!id)return Response.json({error:'A lead ID is required.'},{status:400});const deleted=await removeLead(all?undefined:Number(id));return Response.json({deleted,message:all?`Deleted ${deleted} saved leads.`:'Lead deleted.'})}catch(e){return Response.json({error:e instanceof Error?e.message:'Delete failed'},{status:500})}}
