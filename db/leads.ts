@@ -34,7 +34,7 @@ const emails=(v:unknown)=>{const seen=new Set<string>();return (array(v) as stri
 
 export function output(r:Record<string,unknown>):LeadRecord{
  const query=encodeURIComponent(`${String(r.business_name)}, ${String(r.full_address)}`),mapsUrl=r.place_id?`https://www.google.com/maps/search/?api=1&query=${query}&query_place_id=${encodeURIComponent(String(r.place_id))}`:r.maps_url;
- return {id:Number(r.id),businessName:r.business_name,mapsUrl,websites:array(r.websites),phones:phones(r.phones),whatsapps:phones(r.whatsapps),emails:emails(r.emails),rating:r.rating===null?null:Number(r.rating),reviewCount:Number(r.review_count),fullAddress:r.full_address,country:r.country,state:r.state,city:r.city,category:r.category,status:r.status,confidence:r.confidence,createdAt:new Date(String(r.created_at)).toISOString()};
+ return {id:Number(r.id),businessName:r.business_name,mapsUrl,websites:array(r.websites),phones:phones(r.phones).slice(0,1),whatsapps:phones(r.whatsapps).slice(0,1),emails:emails(r.emails),rating:r.rating===null?null:Number(r.rating),reviewCount:Number(r.review_count),fullAddress:r.full_address,country:r.country,state:r.state,city:r.city,category:r.category,status:r.status,confidence:r.confidence,createdAt:new Date(String(r.created_at)).toISOString()};
 }
 
 export async function list(u:URL):Promise<LeadRecord[]>{
