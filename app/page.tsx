@@ -16,6 +16,7 @@ export default function Home(){
  const [countries,setCountries]=useState<CountryOption[]>([]),[states,setStates]=useState<StateOption[]>([]),[cities,setCities]=useState<string[]>([]);
  const [countryCode,setCountryCode]=useState('IN'),[stateCode,setStateCode]=useState('TN'),[city,setCity]=useState('Madurai'),[locationsLoading,setLocationsLoading]=useState(true);
  const [runMode,setRunMode]=useState('now'),[scheduledAt,setScheduledAt]=useState(''),[limitMode,setLimitMode]=useState('all');
+ const [searchSource,setSearchSource]=useState('category'),[mapUrl,setMapUrl]=useState('');
 
  const load=useCallback(async()=>{setLoading(true);try{const p=new URLSearchParams({q,status,from,to}),r=await fetch('/api/leads?'+p),d=await r.json() as {leads:Lead[];summary:Summary};setLeads(d.leads||[]);setSummary(d.summary||empty)}catch{setNotice('Could not load saved leads.')}finally{setLoading(false)}},[q,status,from,to]);
  useEffect(()=>{const t=setTimeout(load,250);return()=>clearTimeout(t)},[load]);
@@ -37,11 +38,11 @@ export default function Home(){
     <form id="search" onSubmit={search} className="search-card">
      <div className="card-title"><div><b>⌕</b><span><strong>Start a comprehensive search</strong><small>Any business category, with website contact enrichment.</small></span></div><em>Places + official websites</em></div>
      <div className="fields">
+      <label><span>Search method</span><select name="searchMode" value={searchSource} onChange={e=>{setSearchSource(e.target.value);if(e.target.value==='category')setMapUrl('')}}><option value="category">Category & location</option><option value="maps">Specific Google Maps URL</option></select></label>
       <label><span>Country</span><select aria-label="Country" value={countryCode} onChange={e=>{setCountryCode(e.target.value);setStateCode('');setCity('')}} required><option value="">Select country</option>{countries.map(c=><option key={c.isoCode} value={c.isoCode}>{c.name}</option>)}</select><input type="hidden" name="country" value={countries.find(c=>c.isoCode===countryCode)?.name||''}/></label>
       <label><span>State / Province</span><select aria-label="State or province" value={stateCode} onChange={e=>{setStateCode(e.target.value);setCity('')}} disabled={!countryCode||locationsLoading||!states.length} required><option value="">{locationsLoading?'Loading states…':states.length?'Select state':'No states available'}</option>{states.map(s=><option key={s.isoCode} value={s.isoCode}>{s.name}</option>)}</select><input type="hidden" name="state" value={states.find(s=>s.isoCode===stateCode)?.name||''}/></label>
       <label><span>City</span><select aria-label="City" name="city" value={city} onChange={e=>setCity(e.target.value)} disabled={!stateCode||locationsLoading||!cities.length} required><option value="">{locationsLoading?'Loading cities…':cities.length?'Select city':'No cities available'}</option>{cities.map(c=><option key={c} value={c}>{c}</option>)}</select></label>
-      <label className="category"><span>Category / Business title</span><input name="category" defaultValue="Dental clinic" required/></label>
-      <label><span>Google Maps URL (optional)</span><input name="mapUrl" type="url" placeholder="https://maps.app.goo.gl/…"/></label>
+      {searchSource==='category'?<label className="category"><span>Category / Business title</span><input name="category" defaultValue="Dental clinic" required/></label>:<><input type="hidden" name="category" value="Google Maps lead"/><label className="category"><span>Google Maps URL</span><input name="mapUrl" type="url" value={mapUrl} onChange={e=>setMapUrl(e.target.value)} placeholder="https://maps.app.goo.gl/…" required/></label></>}
       <label><span>Collection size</span><select name="limitMode" value={limitMode} onChange={e=>setLimitMode(e.target.value)}><option value="all">All available (up to 60)</option><option value="custom">Custom limit</option></select></label>
       {limitMode==='custom'&&<label><span>Custom limit</span><input name="limit" type="number" min="1" max="60" defaultValue="20"/></label>}
       <label><span>Start</span><select value={runMode} onChange={e=>setRunMode(e.target.value)}><option value="now">Run now</option><option value="scheduled">Schedule date & time</option></select></label>
