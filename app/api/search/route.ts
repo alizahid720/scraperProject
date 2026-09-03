@@ -16,7 +16,7 @@ type AbstractEmailResponse={email_deliverability?:{status?:string;is_format_vali
 
 async function validatePhone(phone:string,keepTrustedOnError=false){
  const apiKey=process.env.ABSTRACT_PHONE_INTELLIGENCE_API_KEY;
- if(!apiKey)return {phone,verified:false};
+ if(!apiKey)return {phone:keepTrustedOnError?phone:'',verified:false};
  try{
   const url=new URL('https://phoneintelligence.abstractapi.com/v1/');
   url.searchParams.set('api_key',apiKey);
@@ -35,7 +35,7 @@ async function validatePhone(phone:string,keepTrustedOnError=false){
 
 async function validateEmail(email:string){
  const apiKey=process.env.ABSTRACT_EMAIL_REPUTATION_API_KEY;
- if(!apiKey)return {email,verified:false};
+ if(!apiKey)return {email:'',verified:false};
  try{
   const url=new URL('https://emailreputation.abstractapi.com/v1/');
   url.searchParams.set('email',email);
