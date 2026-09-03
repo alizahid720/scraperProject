@@ -22,6 +22,7 @@ Required environment variables:
 
 - `DATABASE_URL`
 - `GOOGLE_MAPS_API_KEY`
-- `ABSTRACT_PHONE_API_KEY` (AbstractAPI Phone Validation API key)
+- `ABSTRACT_PHONE_INTELLIGENCE_API_KEY`
+- `ABSTRACT_EMAIL_REPUTATION_API_KEY`
 
 Environment files are ignored and must never be committed.
