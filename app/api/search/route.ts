@@ -11,6 +11,26 @@ const normalizeEmails=(values:string[])=>unique(values.flatMap(raw=>{let value=r
 
 type GooglePlace={id:string;displayName?:{text:string};formattedAddress?:string;googleMapsUri?:string;websiteUri?:string;nationalPhoneNumber?:string;internationalPhoneNumber?:string;rating?:number;userRatingCount?:number};
 type SearchResponse={places?:GooglePlace[];nextPageToken?:string};
+type AbstractPhoneResponse={valid?:boolean;phone_validation?:{is_valid?:boolean};format?:{international?:string};phone_format?:{international?:string}};
+
+async function validatePhone(phone:string){
+ const apiKey=process.env.ABSTRACT_PHONE_API_KEY;
+ if(!apiKey)return {phone,verified:false};
+ try{
+  const url=new URL('https://phonevalidation.abstractapi.com/v1/');
+  url.searchParams.set('api_key',apiKey);
+  url.searchParams.set('phone',phone);
+  const response=await fetch(url,{headers:{accept:'application/json'},signal:AbortSignal.timeout(8000),cache:'no-store'});
+  if(!response.ok)throw new Error(`AbstractAPI returned ${response.status}`);
+  const data=await response.json() as AbstractPhoneResponse;
+  const valid=data.valid??data.phone_validation?.is_valid??false;
+  const international=data.format?.international||data.phone_format?.international||phone;
+  return {phone:valid?normalizePhone(international):'',verified:valid};
+ }catch(error){
+  console.error('AbstractAPI phone validation failed; keeping the Google-listed phone.',error);
+  return {phone,verified:false};
+ }
+}
 
 function demo(category:string,city:string,state:string,country:string,count:number):LeadInput[]{
  const names=['Carewell','Prime','Aster','City','Nova','Harmony','Greenleaf','Sunrise','Apollo','Everbright'];
@@ -31,7 +51,7 @@ async function google(category:string,city:string,state:string,country:string,re
  const found=new Map<string,GooglePlace>();let pageToken:string|undefined;
  do{const body:Record<string,unknown>={textQuery,pageSize:Math.min(20,requested?Math.max(1,requested-found.size):20)};if(pageToken)body.pageToken=pageToken;const r=await fetch('https://places.googleapis.com/v1/places:searchText',{method:'POST',headers:{'content-type':'application/json','X-Goog-Api-Key':key,'X-Goog-FieldMask':'places.id,places.displayName,places.formattedAddress,places.googleMapsUri,places.websiteUri,places.nationalPhoneNumber,places.internationalPhoneNumber,places.rating,places.userRatingCount,nextPageToken'},body:JSON.stringify(body)});if(!r.ok)throw new Error('Google Places request failed. Check the API key, Places API access, and billing configuration.');const data=await r.json() as SearchResponse;for(const p of data.places||[])found.set(p.id,p);pageToken=data.nextPageToken}while(pageToken&&found.size<Math.min(requested||60,60));
  const places=[...found.values()].slice(0,requested||60),leads:LeadInput[]=[];
- for(let i=0;i<places.length;i+=4){const batch=places.slice(i,i+4);leads.push(...await Promise.all(batch.map(async p=>{const extra=await enrichWebsite(p.websiteUri),phones=uniquePhones([p.internationalPhoneNumber||'',p.nationalPhoneNumber||'']),phoneKeys=new Set(phones.map(phone=>phone.replace(/\D/g,'').slice(-10))),whatsapps=extra.whatsapps.filter(phone=>phoneKeys.has(phone.replace(/\D/g,'').slice(-10))),businessName=p.displayName?.text||category,fullAddress=p.formattedAddress||`${city}, ${state}`,query=encodeURIComponent(`${businessName}, ${fullAddress}`);return {businessName,placeId:p.id,mapsUrl:`https://www.google.com/maps/search/?api=1&query=${query}&query_place_id=${encodeURIComponent(p.id)}`,websites:p.websiteUri?[p.websiteUri]:[],phones,whatsapps,emails:extra.emails,rating:p.rating,reviewCount:p.userRatingCount||0,fullAddress,country,state,city,category,status:extra.emails.length||whatsapps.length?'Enriched':'Collected',confidence:phones.length&&extra.emails.length?'High':phones.length||p.websiteUri?'Medium':'Low'}})))}return leads;
+ for(let i=0;i<places.length;i+=4){const batch=places.slice(i,i+4);leads.push(...await Promise.all(batch.map(async p=>{const extra=await enrichWebsite(p.websiteUri),googlePhones=uniquePhones([p.internationalPhoneNumber||'',p.nationalPhoneNumber||'']).slice(0,1),validated=googlePhones[0]?await validatePhone(googlePhones[0]):{phone:'',verified:false},phones=validated.phone?[validated.phone]:[],phoneKeys=new Set(phones.map(phone=>phone.replace(/\D/g,'').slice(-10))),whatsapps=extra.whatsapps.filter(phone=>phoneKeys.has(phone.replace(/\D/g,'').slice(-10))),businessName=p.displayName?.text||category,fullAddress=p.formattedAddress||`${city}, ${state}`,query=encodeURIComponent(`${businessName}, ${fullAddress}`);return {businessName,placeId:p.id,mapsUrl:`https://www.google.com/maps/search/?api=1&query=${query}&query_place_id=${encodeURIComponent(p.id)}`,websites:p.websiteUri?[p.websiteUri]:[],phones,whatsapps,emails:extra.emails,rating:p.rating,reviewCount:p.userRatingCount||0,fullAddress,country,state,city,category,status:validated.verified?'Validated':extra.emails.length||whatsapps.length?'Enriched':'Collected',confidence:validated.verified&&extra.emails.length?'High':phones.length||p.websiteUri?'Medium':'Low'}})))}return leads;
 }
 
-export async function POST(req:Request){try{const b=await req.json() as Record<string,unknown>,country=clean(b.country),state=clean(b.state),city=clean(b.city),category=clean(b.category),mode=clean(b.limitMode)||'all',requested=mode==='all'?null:Math.min(60,Math.max(1,Number(b.limit)||20));if(!country||!state||!city||!category)return Response.json({error:'Country, state, city and category are required.'},{status:400});const leads=await google(category,city,state,country,requested);for(const l of leads)await saveLead(l);return Response.json({message:`Collected and deduplicated ${leads.length} businesses. ${process.env.GOOGLE_MAPS_API_KEY?'All result pages returned by Google were checked, then official websites were scanned for public contacts.':'Demo mode was used; add GOOGLE_MAPS_API_KEY for live results.'}`,collected:leads.length})}catch(e){return Response.json({error:e instanceof Error?e.message:'Search failed'},{status:500})}}
+export async function POST(req:Request){try{const b=await req.json() as Record<string,unknown>,country=clean(b.country),state=clean(b.state),city=clean(b.city),category=clean(b.category),mode=clean(b.limitMode)||'all',requested=mode==='all'?null:Math.min(60,Math.max(1,Number(b.limit)||20));if(!country||!state||!city||!category)return Response.json({error:'Country, state, city and category are required.'},{status:400});const leads=await google(category,city,state,country,requested);for(const l of leads)await saveLead(l);return Response.json({message:`Collected and deduplicated ${leads.length} businesses. ${process.env.GOOGLE_MAPS_API_KEY?'All Google result pages were checked and official websites were scanned.':''} ${process.env.ABSTRACT_PHONE_API_KEY?'Listed phone numbers were checked with AbstractAPI.':'Add ABSTRACT_PHONE_API_KEY to enable phone validation.'}`.trim(),collected:leads.length})}catch(e){return Response.json({error:e instanceof Error?e.message:'Search failed'},{status:500})}}
