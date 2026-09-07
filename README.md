@@ -24,5 +24,6 @@ Required environment variables:
 - `GOOGLE_MAPS_API_KEY`
 - `ABSTRACT_PHONE_INTELLIGENCE_API_KEY`
 - `ABSTRACT_EMAIL_REPUTATION_API_KEY`
+- `OUTSCRAPER_API_KEY`
 
 Environment files are ignored and must never be committed.

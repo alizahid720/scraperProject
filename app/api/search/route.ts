@@ -13,6 +13,9 @@ type GooglePlace={id:string;displayName?:{text:string};formattedAddress?:string;
 type SearchResponse={places?:GooglePlace[];nextPageToken?:string};
 type AbstractPhoneResponse={valid?:boolean;phone_validation?:{is_valid?:boolean};format?:{international?:string};phone_format?:{international?:string}};
 type AbstractEmailResponse={email_deliverability?:{status?:string;is_format_valid?:boolean;is_mx_valid?:boolean;is_smtp_valid?:boolean};email_quality?:{is_disposable?:boolean};email_risk?:{address_risk_status?:string}};
+type OutscraperResponse={status?:string;data?:unknown;error?:boolean;errorMessage?:string};
+
+export const maxDuration=300;
 
 async function validatePhone(phone:string,keepTrustedOnError=false){
  const apiKey=process.env.ABSTRACT_PHONE_INTELLIGENCE_API_KEY;
@@ -74,6 +77,51 @@ function contacts(html:string){const withoutCode=html.replace(/<script[\s\S]*?<\
 async function fetchHtml(url:string){let target=safeWebsite(url);if(!target)return '';for(let hop=0;hop<4;hop++){if(!await publicTarget(target))return '';const r=await fetch(target,{headers:{'user-agent':'LeadForge/1.0 (+public business contact enrichment)','accept':'text/html'},redirect:'manual',signal:AbortSignal.timeout(10000)});if(r.status>=300&&r.status<400){const next=r.headers.get('location');if(!next)return '';target=safeWebsite(new URL(next,target).toString());if(!target)return '';continue}if(!r.ok||!String(r.headers.get('content-type')).includes('text/html'))return '';const length=Number(r.headers.get('content-length')||0);if(length>2_000_000)return '';return (await r.text()).slice(0,2_000_000)}return ''}
 async function enrichWebsite(website?:string){if(!website)return {emails:[],phones:[],whatsapps:[]};try{const base=safeWebsite(website);if(!base)return {emails:[],phones:[],whatsapps:[]};const home=await fetchHtml(base.toString()),pages=[home];pages.push(...await Promise.all(contactLinks(home,base).map(fetchHtml)));return pages.reduce((all,html)=>{const c=contacts(html);return {emails:unique([...all.emails,...c.emails]),phones:unique([...all.phones,...c.phones]),whatsapps:unique([...all.whatsapps,...c.whatsapps])}},{emails:[] as string[],phones:[] as string[],whatsapps:[] as string[]})}catch{return {emails:[],phones:[],whatsapps:[]}}}
 
+function nestedStrings(value:unknown):string[]{
+ if(typeof value==='string'||typeof value==='number')return [String(value)];
+ if(Array.isArray(value))return value.flatMap(nestedStrings);
+ if(value&&typeof value==='object')return Object.values(value as Record<string,unknown>).flatMap(nestedStrings);
+ return [];
+}
+
+function valuesFor(place:Record<string,unknown>,pattern:RegExp){return Object.entries(place).filter(([key])=>pattern.test(key)).flatMap(([,value])=>nestedStrings(value))}
+function websiteValues(place:Record<string,unknown>){return unique(valuesFor(place,/^(website|websites|site|domain|domains|company_website|company_websites)$/i).map(value=>/^https?:\/\//i.test(value)?value:`https://${value}`).filter(value=>Boolean(safeWebsite(value)))).slice(0,3)}
+function outscraperPlaces(data:unknown):Record<string,unknown>[] {const rows=Array.isArray(data)?data:[];return (Array.isArray(rows[0])?rows.flat():rows).filter(value=>value&&typeof value==='object') as Record<string,unknown>[]}
+
+async function outscraper(category:string,city:string,state:string,country:string,requested:number|null):Promise<LeadInput[]>{
+ const apiKey=process.env.OUTSCRAPER_API_KEY;
+ if(!apiKey)return google(category,city,state,country,requested);
+ const url=new URL('https://api.outscraper.cloud/google-maps-search');
+ url.searchParams.set('query',`${category}, ${city}, ${state}, ${country}`);
+ url.searchParams.set('limit',String(requested||500));
+ url.searchParams.set('dropDuplicates','true');
+ url.searchParams.set('async','false');
+ url.searchParams.append('enrichment','contacts_n_leads');
+ url.searchParams.append('enrichment','company_websites_finder');
+ const response=await fetch(url,{headers:{'X-API-KEY':apiKey,accept:'application/json'},signal:AbortSignal.timeout(280000),cache:'no-store'});
+ const payload=await response.json().catch(()=>({})) as OutscraperResponse;
+ if(!response.ok||payload.error)throw new Error(payload.errorMessage||`Outscraper request failed (${response.status}).`);
+ if(payload.status&&payload.status.toLowerCase()!=='success')throw new Error(`Outscraper job did not complete synchronously (${payload.status}). Please retry.`);
+ const places=outscraperPlaces(payload.data),leads:LeadInput[]=[];
+ for(let i=0;i<places.length;i+=4){
+  const batch=places.slice(i,i+4);
+  leads.push(...await Promise.all(batch.map(async place=>{
+   const websites=websiteValues(place),websiteExtra=await enrichWebsite(websites[0]);
+   const listedPhones=uniquePhones(valuesFor(place,/^(phone|phone_number|primary_phone)$/i)).slice(0,1);
+   const discoveredPhones=uniquePhones([...valuesFor(place,/^(phones|additional_phones|phone_\d+)$/i),...websiteExtra.phones]);
+   const discoveredEmails=normalizeEmails([...valuesFor(place,/email/i),...websiteExtra.emails]);
+   const [validated,emailChecks]=await Promise.all([validatePhones(listedPhones,discoveredPhones),Promise.all(discoveredEmails.slice(0,8).map(validateEmail))]);
+   const phones=validated.phones,phoneKeys=new Set(phones.map(phone=>phone.replace(/\D/g,'').slice(-10)));
+   const whatsapps=uniquePhones([...valuesFor(place,/whats?app/i),...websiteExtra.whatsapps]).filter(phone=>phoneKeys.has(phone.replace(/\D/g,'').slice(-10))).slice(0,4);
+   const emails=unique(emailChecks.map(result=>result.email)).slice(0,4),emailVerified=emailChecks.some(result=>result.verified);
+   const businessName=clean(place.name)||category,fullAddress=clean(place.full_address||place.address)||`${city}, ${state}`;
+   const mapsUrl=clean(place.location_link)||`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${businessName}, ${fullAddress}`)}`;
+   return {businessName,placeId:clean(place.place_id||place.google_id),mapsUrl,websites,phones,whatsapps,emails,rating:Number(place.rating)||null,reviewCount:Number(place.reviews)||0,fullAddress,country:clean(place.country)||country,state:clean(place.state)||state,city:clean(place.city)||city,category,status:validated.verified||emailVerified?'Validated':whatsapps.length?'Enriched':'Collected',confidence:validated.verified&&emailVerified?'High':validated.verified||emailVerified||websites.length?'Medium':'Low'};
+  })));
+ }
+ return leads;
+}
+
 async function google(category:string,city:string,state:string,country:string,requested:number|null):Promise<LeadInput[]>{
  const key=process.env.GOOGLE_MAPS_API_KEY;if(!key)return demo(category,city,state,country,requested||10);
  const textQuery=`${category} in ${city}, ${state}, ${country}`;
@@ -83,4 +131,4 @@ async function google(category:string,city:string,state:string,country:string,re
  for(let i=0;i<places.length;i+=4){const batch=places.slice(i,i+4);leads.push(...await Promise.all(batch.map(async p=>{const extra=await enrichWebsite(p.websiteUri),googlePhones=uniquePhones([p.internationalPhoneNumber||'',p.nationalPhoneNumber||'']).slice(0,1),[validated,emailChecks]=await Promise.all([validatePhones(googlePhones,extra.phones),Promise.all(extra.emails.slice(0,8).map(validateEmail))]),phones=validated.phones,phoneKeys=new Set(phones.map(phone=>phone.replace(/\D/g,'').slice(-10))),whatsapps=extra.whatsapps.filter(phone=>phoneKeys.has(phone.replace(/\D/g,'').slice(-10))).slice(0,4),emails=unique(emailChecks.map(result=>result.email)).slice(0,4),emailVerified=emailChecks.some(result=>result.verified),businessName=p.displayName?.text||category,fullAddress=p.formattedAddress||`${city}, ${state}`,query=encodeURIComponent(`${businessName}, ${fullAddress}`);return {businessName,placeId:p.id,mapsUrl:`https://www.google.com/maps/search/?api=1&query=${query}&query_place_id=${encodeURIComponent(p.id)}`,websites:p.websiteUri?[p.websiteUri]:[],phones,whatsapps,emails,rating:p.rating,reviewCount:p.userRatingCount||0,fullAddress,country,state,city,category,status:validated.verified||emailVerified?'Validated':whatsapps.length?'Enriched':'Collected',confidence:validated.verified&&emailVerified?'High':validated.verified||emailVerified||p.websiteUri?'Medium':'Low'}})))}return leads;
 }
 
-export async function POST(req:Request){try{const b=await req.json() as Record<string,unknown>,country=clean(b.country),state=clean(b.state),city=clean(b.city),category=clean(b.category),mode=clean(b.limitMode)||'all',requested=mode==='all'?null:Math.min(60,Math.max(1,Number(b.limit)||20));if(!country||!state||!city||!category)return Response.json({error:'Country, state, city and category are required.'},{status:400});const leads=await google(category,city,state,country,requested);for(const l of leads)await saveLead(l);return Response.json({message:`Collected and deduplicated ${leads.length} businesses. Google results and official websites were checked. ${process.env.ABSTRACT_PHONE_INTELLIGENCE_API_KEY?'Phone intelligence enabled.':'Phone intelligence is not configured.'} ${process.env.ABSTRACT_EMAIL_REPUTATION_API_KEY?'Email reputation enabled.':'Email reputation is not configured.'}`,collected:leads.length})}catch(e){return Response.json({error:e instanceof Error?e.message:'Search failed'},{status:500})}}
+export async function POST(req:Request){try{const b=await req.json() as Record<string,unknown>,country=clean(b.country),state=clean(b.state),city=clean(b.city),category=clean(b.category),mode=clean(b.limitMode)||'all',requested=mode==='all'?null:Math.min(500,Math.max(1,Number(b.limit)||20));if(!country||!state||!city||!category)return Response.json({error:'Country, state, city and category are required.'},{status:400});const leads=await outscraper(category,city,state,country,requested);for(const l of leads)await saveLead(l);return Response.json({message:`Collected and deduplicated ${leads.length} businesses using ${process.env.OUTSCRAPER_API_KEY?'Outscraper':'Google Places'}. Businesses without websites are included. Phone intelligence and email reputation validation applied where contacts were available.`,collected:leads.length})}catch(e){return Response.json({error:e instanceof Error?e.message:'Search failed'},{status:500})}}
