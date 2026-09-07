@@ -86,6 +86,7 @@ function nestedStrings(value:unknown):string[]{
 
 function valuesFor(place:Record<string,unknown>,pattern:RegExp){return Object.entries(place).filter(([key])=>pattern.test(key)).flatMap(([,value])=>nestedStrings(value))}
 function websiteValues(place:Record<string,unknown>){const normalize=(values:string[])=>unique(values.map(value=>/^https?:\/\//i.test(value)?value:`https://${value}`).filter(value=>Boolean(safeWebsite(value))));const listed=normalize(valuesFor(place,/^website$/i));if(listed.length)return listed.slice(0,1);return normalize(valuesFor(place,/^(websites|site|domain|domains|company_website|company_websites)$/i)).slice(0,1)}
+function relevantEmails(values:string[],websites:string[]){const hosts=websites.flatMap(website=>{try{return [new URL(website).hostname.toLowerCase().replace(/^www\./,'')]}catch{return []}}),publicDomains=new Set(['gmail.com','googlemail.com','yahoo.com','yahoo.co.in','outlook.com','hotmail.com','live.com','icloud.com','proton.me','protonmail.com']);return normalizeEmails(values).filter(email=>{const domain=email.split('@')[1];return publicDomains.has(domain)||hosts.some(host=>domain===host||domain.endsWith(`.${host}`)||host.endsWith(`.${domain}`))})}
 function outscraperPlaces(data:unknown):Record<string,unknown>[] {const rows=Array.isArray(data)?data:[];return (Array.isArray(rows[0])?rows.flat():rows).filter(value=>value&&typeof value==='object') as Record<string,unknown>[]}
 
 async function outscraper(category:string,city:string,state:string,country:string,requested:number|null):Promise<LeadInput[]>{
@@ -108,8 +109,8 @@ async function outscraper(category:string,city:string,state:string,country:strin
   leads.push(...await Promise.all(batch.map(async place=>{
    const websites=websiteValues(place),websiteExtra=await enrichWebsites(websites);
    const listedPhones=uniquePhones(valuesFor(place,/^(phone|phone_number|primary_phone)$/i)).slice(0,1);
-   const discoveredPhones=uniquePhones([...valuesFor(place,/^(phones|additional_phones|phone_\d+)$/i),...websiteExtra.phones]);
-   const discoveredEmails=normalizeEmails([...valuesFor(place,/email/i),...websiteExtra.emails]);
+   const discoveredPhones=uniquePhones([...valuesFor(place,/phone/i),...websiteExtra.phones]);
+   const discoveredEmails=relevantEmails([...valuesFor(place,/email/i),...websiteExtra.emails],websites);
    const [validated,emailChecks]=await Promise.all([validatePhones(listedPhones,discoveredPhones),Promise.all(discoveredEmails.slice(0,8).map(email=>validateEmail(email)))]);
    const phones=validated.phones,phoneKeys=new Set(phones.map(phone=>phone.replace(/\D/g,'').slice(-10)));
    const whatsapps=uniquePhones([...valuesFor(place,/whats?app/i),...websiteExtra.whatsapps]).filter(phone=>phoneKeys.has(phone.replace(/\D/g,'').slice(-10))).slice(0,4);
