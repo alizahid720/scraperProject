@@ -109,11 +109,11 @@ async function outscraper(category:string,city:string,state:string,country:strin
   leads.push(...await Promise.all(batch.map(async place=>{
    const websites=websiteValues(place),websiteExtra=await enrichWebsites(websites);
    const listedPhones=uniquePhones(valuesFor(place,/^(phone|phone_number|primary_phone)$/i)).slice(0,1);
-   const discoveredPhones=uniquePhones([...valuesFor(place,/phone/i),...websiteExtra.phones]);
+   const discoveredPhones=websiteExtra.phones;
    const discoveredEmails=relevantEmails([...valuesFor(place,/email/i),...websiteExtra.emails],websites);
    const [validated,emailChecks]=await Promise.all([validatePhones(listedPhones,discoveredPhones),Promise.all(discoveredEmails.slice(0,8).map(email=>validateEmail(email)))]);
    const phones=validated.phones,phoneKeys=new Set(phones.map(phone=>phone.replace(/\D/g,'').slice(-10)));
-   const whatsapps=uniquePhones([...valuesFor(place,/whats?app/i),...websiteExtra.whatsapps]).filter(phone=>phoneKeys.has(phone.replace(/\D/g,'').slice(-10))).slice(0,4);
+   const whatsapps=websiteExtra.whatsapps.filter(phone=>phoneKeys.has(phone.replace(/\D/g,'').slice(-10))).slice(0,4);
    const emails=unique(emailChecks.map(result=>result.email)).slice(0,4),emailVerified=emailChecks.some(result=>result.verified);
    const businessName=clean(place.name)||category,fullAddress=clean(place.full_address||place.address)||`${city}, ${state}`;
    const mapsUrl=clean(place.location_link)||`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${businessName}, ${fullAddress}`)}`;
