@@ -28,7 +28,7 @@ export async function saveLead(l:LeadInput){
 }
 
 const array=(v:unknown)=>Array.isArray(v)?v:typeof v==='string'?JSON.parse(v):[];
-const normalizePhone=(value:string)=>{const v=String(value).trim();if(!v||/[a-z]/i.test(v)||/[\/|]/.test(v)||/(?:19|20)\d{2}[-/.]\d{1,2}[-/.]\d{1,2}/.test(v)||/^\d(?:\.\d)?\s+(?:19|20)\d{2}/.test(v))return '';const digits=v.replace(/\D/g,'');if(digits.length<8||digits.length>15||/012345|123456|234567|345678|456789|567890|678910|987654|876543/.test(digits))return '';return v.startsWith('+')?`+${digits}`:digits};
+const normalizePhone=(value:string)=>{const v=String(value).trim();if(!v||/[a-z]/i.test(v)||/[\/|]/.test(v)||/(?:19|20)\d{2}[-/.]\d{1,2}[-/.]\d{1,2}/.test(v)||/^\d(?:\.\d)?\s+(?:19|20)\d{2}/.test(v))return '';const digits=v.replace(/\D/g,'');if(digits.startsWith('91')&&digits.length!==12)return '';if(!digits.startsWith('91')&&(digits.length<10||digits.length>11))return '';if(/(\d)\1{7,}/.test(digits)||/012345|123456|234567|345678|456789|567890|678910|987654|876543/.test(digits))return '';return v.startsWith('+')?`+${digits}`:digits};
 const phones=(v:unknown)=>{const seen=new Set<string>();return (array(v) as string[]).map(normalizePhone).filter(Boolean).filter(value=>{const digits=value.replace(/\D/g,''),key=digits.length>=10?digits.slice(-10):digits;if(seen.has(key))return false;seen.add(key);return true})};
 const emails=(v:unknown)=>{const seen=new Set<string>();return (array(v) as string[]).flatMap(raw=>{let value=String(raw);try{value=decodeURIComponent(value)}catch{}return value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,24}/gi)||[]}).map(value=>value.toLowerCase()).filter(value=>{const [local,domain]=value.split('@');if(!local||!domain||/^(example|test|testing|demo|dummy|sample|email|yourname|name|user|u00[0-9a-f]*)$/i.test(local)||/(example\.(com|org|net)|test\.com|domain\.com)$/i.test(domain)||seen.has(value))return false;seen.add(value);return true})};
 
@@ -39,7 +39,7 @@ export function output(r:Record<string,unknown>):LeadRecord{
 
 export async function list(u:URL):Promise<LeadRecord[]>{
  const d=await db(),q=u.searchParams.get('q')||'',status=u.searchParams.get('status')||'all',from=u.searchParams.get('from')||'',to=u.searchParams.get('to')||'';
- let query='SELECT * FROM leads WHERE 1=1',args:unknown[]=[];
+ let query='SELECT * FROM leads WHERE 1=1';const args:unknown[]=[];
  if(q){args.push(`%${q}%`);query+=` AND (business_name ILIKE $${args.length} OR category ILIKE $${args.length} OR city ILIKE $${args.length})`}
  if(status!=='all'){args.push(status);query+=` AND status=$${args.length}`}
  if(from){args.push(from);query+=` AND created_at >= $${args.length}::timestamptz`}
